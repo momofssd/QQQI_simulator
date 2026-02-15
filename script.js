@@ -55,8 +55,10 @@ function generateMarketTrends(months, trendType, initialPrice = 50) {
   let volatilityMultiplier = 1.0;
 
   if (trendType === "bullish") {
-    trendMultiplier = 1.5; // 50% higher returns (bull market)
-    volatilityMultiplier = 0.8; // Lower volatility in steady bull
+    // Bullish case: 3% annual growth mean with randomness
+    // 3% annual return = ~0.25% monthly return
+    trendMultiplier = 0.03 / 12 / baseMonthlyReturn;
+    volatilityMultiplier = 1.0;
   } else if (trendType === "bearish") {
     trendMultiplier = -2.0; // Negative returns (bear market)
     volatilityMultiplier = 1.5; // Higher volatility in bear market
@@ -394,6 +396,34 @@ function calculate() {
   setCardValue("finalCostBasis", finalCostBasis);
 
   document.getElementById("targetYearDisplay").textContent = targetYearCalc;
+
+  // Calculate market growth statistics
+  const initialMarketPrice = qqqiPrice;
+  const finalMarketPrice = currentSharePrice;
+  const totalMarketGrowthPct =
+    ((finalMarketPrice - initialMarketPrice) / initialMarketPrice) * 100;
+  const avgAnnualMarketGrowthPct =
+    (Math.pow(finalMarketPrice / initialMarketPrice, 1 / totalProjectionYears) -
+      1) *
+    100;
+
+  const avgGrowthEl = document.getElementById("avgMarketGrowth");
+  const totalGrowthEl = document.getElementById("totalMarketGrowth");
+
+  avgGrowthEl.textContent = avgAnnualMarketGrowthPct.toFixed(2) + "%";
+  totalGrowthEl.textContent = totalMarketGrowthPct.toFixed(2) + "%";
+
+  if (avgAnnualMarketGrowthPct < 0) {
+    avgGrowthEl.classList.add("negative");
+  } else {
+    avgGrowthEl.classList.remove("negative");
+  }
+
+  if (totalMarketGrowthPct < 0) {
+    totalGrowthEl.classList.add("negative");
+  } else {
+    totalGrowthEl.classList.remove("negative");
+  }
 
   // Update table
   const tbody = document.getElementById("yearTableBody");
