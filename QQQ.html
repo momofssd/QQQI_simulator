@@ -422,6 +422,10 @@
             <div class="card-value" id="totalInvested">$0</div>
           </div>
           <div class="card">
+            <div class="card-title">Total Gain (Bal + ROC - Prin)</div>
+            <div class="card-value" id="totalGain">$0</div>
+          </div>
+          <div class="card">
             <div class="card-title">Final Balance</div>
             <div class="card-value" id="finalBalance">$0</div>
           </div>
@@ -505,6 +509,13 @@
         const formattedValue = formatCurrency(value);
         element.textContent = formattedValue;
 
+        // Apply negative class for red coloring if value is below zero
+        if (value < 0) {
+          element.classList.add("negative");
+        } else {
+          element.classList.remove("negative");
+        }
+
         // Dynamically adjust font size based on length
         element.classList.remove("small", "xsmall");
         if (formattedValue.length > 11) {
@@ -514,19 +525,18 @@
         }
       }
 
-      function generateMarketTrends(months, trendType) {
+      function generateMarketTrends(months, trendType, initialPrice = 50) {
         const trends = [];
         const years = Math.ceil(months / 12);
+        let simulatedPrice = initialPrice;
 
         for (let y = 0; y < years; y++) {
           let annualTarget;
-          let isRegimeShift = false;
 
           if (trendType === "bullish") {
             // Bullish Bias: 90% growth (5% to 15%), 10% retreat (-10% to -20%)
             if (Math.random() < 0.1) {
               annualTarget = -(Math.random() * 0.1 + 0.1); // -10% to -20%
-              isRegimeShift = true;
             } else {
               annualTarget = Math.random() * 0.1 + 0.05; // 5% to 15%
             }
@@ -534,25 +544,29 @@
             // Bearish Bias: 80% decline (0% to -14%), 20% recovery (+10% to +20%)
             if (Math.random() < 0.2) {
               annualTarget = Math.random() * 0.1 + 0.1; // +10% to +20%
-              isRegimeShift = true;
             } else {
               annualTarget = -(Math.random() * 0.14); // 0% to -14%
             }
           } else if (trendType === "random") {
-            // Standard Random: ±15-20% annual range
-            annualTarget = Math.random() * 0.4 - 0.2; // -20% to +20%
+            // Mean-Reverting Random: Fluctuates but returns to initial price
+            // If price is above initial, bias towards negative; if below, bias towards positive.
+            const deviation = (simulatedPrice - initialPrice) / initialPrice;
+            const meanReversionStrength = 0.3; // How strongly it pulls back
+            const randomVolatility = Math.random() * 0.3 - 0.15; // ±15% natural annual volatility
+
+            annualTarget = randomVolatility - deviation * meanReversionStrength;
           } else {
             annualTarget = 0;
           }
 
-          // Distribute annual target into 12 months with added random noise
-          // This creates a more natural walk towards the annual target
+          // Distribute annual target into 12 months with noise
           const monthlyBase = annualTarget / 12;
           for (let m = 0; m < 12; m++) {
             if (trends.length < months) {
-              // Add some monthly noise (±2%) so it's not a straight line
               const noise = Math.random() * 0.04 - 0.02;
-              trends.push(monthlyBase + noise);
+              const monthlyVolatility = monthlyBase + noise;
+              trends.push(monthlyVolatility);
+              simulatedPrice *= 1 + monthlyVolatility;
             }
           }
         }
@@ -601,12 +615,16 @@
         const baseMonthlyROC = annualROC / 100 / 12;
 
         // Generate market trends (Monthly)
-        const monthlyTrends = generateMarketTrends(totalMonths, marketTrend);
+        const monthlyTrends = generateMarketTrends(
+          totalMonths,
+          marketTrend,
+          qqqiPrice,
+        );
 
         // Initialize share tracking
         let totalShares = initialBalance / qqqiPrice;
         let currentSharePrice = qqqiPrice;
-        let totalInvested = initialBalance;
+        let totalPrincipal = initialBalance; // Out-of-pocket cash
         let totalROCReceived = 0;
         let totalROCReinvested = 0;
         let totalTaxDeferred = 0;
@@ -648,7 +666,7 @@
           if (age < targetAge) {
             const sharesAdded = monthlyDcaAmount / currentSharePrice;
             totalShares += sharesAdded;
-            totalInvested += monthlyDcaAmount;
+            totalPrincipal += monthlyDcaAmount;
 
             // Add new investment lot
             investmentLots.push({
@@ -747,7 +765,7 @@
             age: age,
             shares: totalShares,
             sharePrice: currentSharePrice,
-            totalInvested: totalInvested,
+            totalInvested: totalPrincipal,
             balance: balance,
             monthlyROC: rocAmount,
             rocReinvested: rocReinvested,
@@ -777,7 +795,11 @@
           }
         }
 
-        const finalBalance = totalShares * currentSharePrice;
+        const finalBalance =
+          monthlyData.length > 0
+            ? monthlyData[monthlyData.length - 1].balance
+            : totalShares * currentSharePrice;
+
         const finalCostBasis = investmentLots.reduce(
           (sum, lot) => sum + lot.totalCostBasis,
           0,
@@ -808,9 +830,13 @@
 
         const totalAllTaxes = totalTaxesPaid + capitalGainsTax;
 
+        // Total Invested = Out-of-pocket Principal + Reinvested ROC
+        const totalInvested = totalPrincipal + totalROCReinvested;
+
         // Display results with dynamic font sizing
-        setCardValue("totalPrincipal", totalInvested);
-        setCardValue("totalInvested", totalInvested + totalROCReinvested);
+        setCardValue("totalPrincipal", totalPrincipal);
+        setCardValue("totalInvested", totalInvested);
+        setCardValue("totalGain", finalBalance - totalInvested + totalROC);
         setCardValue("finalBalance", finalBalance);
         setCardValue("totalROC", totalROC);
         setCardValue("latestMonthlyROC", latestMonthlyROC);
@@ -1055,7 +1081,7 @@
       }
 
       function reset() {
-        document.getElementById("initialBalance").value = "10000";
+        document.getElementById("initialBalance").value = "0";
         document.getElementById("qqqiPrice").value = "50";
         document.getElementById("monthlyDcaAmount").value = "400";
         document.getElementById("currentAge").value = "39";
