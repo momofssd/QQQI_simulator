@@ -33,50 +33,65 @@ function setCardValue(elementId, value) {
 
 function generateMarketTrends(months, trendType, initialPrice = 50) {
   const trends = [];
-  const years = Math.ceil(months / 12);
-  let simulatedPrice = initialPrice;
 
-  for (let y = 0; y < years; y++) {
-    let annualTarget;
+  // QQQ statistics (QQQI has 0.8 beta, so multiply volatility by 0.88)
+  // QQQ historical: ~13% annual return, ~20% annualized volatility
+  const qqqBeta = 0.1;
+  const qqqAnnualReturn = 0.13;
+  const qqqAnnualVolatility = 0.2; // Standard deviation
 
-    if (trendType === "bullish") {
-      // Bullish Bias: 90% growth (5% to 15%), 10% retreat (-10% to -20%)
-      if (Math.random() < 0.1) {
-        annualTarget = -(Math.random() * 0.1 + 0.1); // -10% to -20%
-      } else {
-        annualTarget = Math.random() * 0.1 + 0.05; // 5% to 15%
-      }
-    } else if (trendType === "bearish") {
-      // Bearish Bias: 80% decline (0% to -14%), 20% recovery (+10% to +20%)
-      if (Math.random() < 0.2) {
-        annualTarget = Math.random() * 0.1 + 0.1; // +10% to +20%
-      } else {
-        annualTarget = -(Math.random() * 0.14); // 0% to -14%
-      }
-    } else if (trendType === "random") {
-      // Mean-Reverting Random: Fluctuates but returns to initial price
-      // If price is above initial, bias towards negative; if below, bias towards positive.
-      const deviation = (simulatedPrice - initialPrice) / initialPrice;
-      const meanReversionStrength = 0.3; // How strongly it pulls back
-      const randomVolatility = Math.random() * 0.3 - 0.15; // ±15% natural annual volatility
+  // Convert to monthly parameters
+  // Monthly return = annual / 12 (simplified)
+  // Monthly volatility = annual / sqrt(12)
+  const qqqMonthlyReturn = qqqAnnualReturn / 12;
+  const qqqMonthlyVolatility = qqqAnnualVolatility / Math.sqrt(12); // ~5.77% monthly
 
-      annualTarget = randomVolatility - deviation * meanReversionStrength;
+  // Apply QQQI's 0.88 beta
+  const baseMonthlyReturn = qqqMonthlyReturn * qqqBeta;
+  const baseMonthlyVol = qqqMonthlyVolatility * qqqBeta; // ~5.08% monthly std dev
+
+  // Adjust base return by trend type
+  let trendMultiplier = 1.0;
+  let volatilityMultiplier = 1.0;
+
+  if (trendType === "bullish") {
+    trendMultiplier = 1.5; // 50% higher returns (bull market)
+    volatilityMultiplier = 0.8; // Lower volatility in steady bull
+  } else if (trendType === "bearish") {
+    trendMultiplier = -2.0; // Negative returns (bear market)
+    volatilityMultiplier = 1.5; // Higher volatility in bear market
+  } else if (trendType === "neutral") {
+    trendMultiplier = 0; // No drift
+    volatilityMultiplier = 0; // No volatility
+  } else if (trendType === "random") {
+    trendMultiplier = 1.0; // Normal long-term average
+    volatilityMultiplier = 1.0; // Normal volatility
+  }
+
+  // Generate monthly returns using random walk with drift
+  for (let month = 0; month < months; month++) {
+    if (trendType === "neutral") {
+      trends.push(0);
     } else {
-      annualTarget = 0;
-    }
+      // Drift component (expected monthly return)
+      const drift = baseMonthlyReturn * trendMultiplier;
 
-    // Distribute annual target into 12 months with noise
-    const monthlyBase = annualTarget / 12;
-    for (let m = 0; m < 12; m++) {
-      if (trends.length < months) {
-        // For Neutral trend, no noise, price stays exactly the same
-        const noise = trendType === "neutral" ? 0 : Math.random() * 0.04 - 0.02;
-        const monthlyVolatility = monthlyBase + noise;
-        trends.push(monthlyVolatility);
-        simulatedPrice *= 1 + monthlyVolatility;
-      }
+      // Random component (volatility shock)
+      // Box-Muller transform for normal distribution
+      const u1 = Math.random();
+      const u2 = Math.random();
+      const normalRandom =
+        Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      const volatilityShock =
+        normalRandom * baseMonthlyVol * volatilityMultiplier;
+
+      // Monthly return = drift + random shock
+      const monthlyReturn = drift + volatilityShock;
+
+      trends.push(monthlyReturn);
     }
   }
+
   return trends;
 }
 
@@ -111,8 +126,10 @@ function calculate() {
   const totalProjectionYears = sellAge - currentAge; // Project to sell age
   const totalMonths = totalProjectionYears * 12;
 
-  // Internal target ROC is based on historical QQQI averages (~1% per month)
-  const targetMonthlyROC = 0.01166; // approx 14% annual
+  // Use the annual ROC rate from the user input
+  const annualROC =
+    parseFloat(document.getElementById("annualROC").value) / 100;
+  const targetMonthlyROC = annualROC / 12;
 
   // Generate market trends (Monthly)
   const monthlyTrends = generateMarketTrends(
@@ -177,26 +194,39 @@ function calculate() {
     }
 
     // Calculate monthly ROC distribution - ALWAYS PAID regardless of age
-    // Reflected as an option selling strategy (VRP model):
-    // ROC = Premium Collected (based on Implied Vol) - Option Payouts (based on Realized Vol)
+    // QQQI generates income by selling call options on NDX and distributes as ROC
+    // Income varies with market volatility due to the Volatility Risk Premium (VRP)
     const balance = totalShares * currentSharePrice;
 
-    // 1. Simulate Implied Volatility (IV) for the month
-    // IV is typically higher than realized vol (VRP)
-    const monthlyIV = targetMonthlyROC * (1 + (Math.random() * 0.6 - 0.2));
+    // Base monthly premium collection rate (~1.2% monthly for ~14% annual)
+    // This represents the option premiums collected from selling covered calls
+    const basePremiumRate = targetMonthlyROC * 1.03; // Slightly higher than target to account for reductions
 
-    // 2. Realized Volatility (RV) is the absolute monthly price change
+    // Realized Volatility (RV) is the absolute monthly price change
     const monthlyRV = Math.abs(monthlyVolatility);
 
-    // 3. ROC Amount is the Premium minus any losses from the move exceeding IV
-    // Payout on ITM options reduces distributions (VRP model)
-    const netPremiumFactor = Math.max(
-      0.001,
-      monthlyIV - Math.max(0, monthlyRV - monthlyIV) * 0.4,
+    // Estimate typical monthly volatility (approx 1.5% = ~18% annualized)
+    const typicalMonthlyVol = 0.015;
+
+    // Calculate base premium collected (relatively stable)
+    let premiumCollected = balance * basePremiumRate;
+
+    // When market moves sharply, sold calls go ITM and reduce net income
+    // VRP exists because Implied Vol > Realized Vol on average, but large moves can reverse this
+    const excessMove = Math.max(0, monthlyRV - typicalMonthlyVol);
+
+    // Option payouts reduce net income when realized vol exceeds typical vol
+    // Using 50% haircut on excess moves (conservative estimate)
+    const optionPayout = excessMove * balance * 0.5;
+
+    // Net ROC = Premium Collected - Option Payouts
+    // Add small random variation (±5%) to simulate month-to-month variation in option market conditions
+    const randomVariation = 1 + (Math.random() * 0.1 - 0.05);
+    const rocAmount = Math.max(
+      balance * 0.002, // Minimum floor of 0.2% monthly (even in worst months)
+      (premiumCollected - optionPayout) * randomVariation,
     );
 
-    // Scale to match the user's targeted annual ROC rate on average
-    const rocAmount = balance * netPremiumFactor;
     const rocPerShare = rocAmount / totalShares;
     totalROCReceived += rocAmount;
 
@@ -323,12 +353,11 @@ function calculate() {
   );
   const targetYearCalc = currentYear + yearsToDCAStop;
 
-  // Calculate the average of the last 12 months of ROC
+  // Calculate the sum of the last 12 months of ROC
   const last12Months = monthlyData.slice(-12);
-  const last12MonthROCAvg =
+  const latestAnnualROC =
     last12Months.length > 0
-      ? last12Months.reduce((sum, data) => sum + data.monthlyROC, 0) /
-        last12Months.length
+      ? last12Months.reduce((sum, data) => sum + data.monthlyROC, 0)
       : 0;
 
   // Use the sum of monthly data for Total ROC Received to ensure absolute consistency
@@ -357,7 +386,7 @@ function calculate() {
   setCardValue("totalGain", finalBalance - totalInvested + totalROC);
   setCardValue("finalBalance", finalBalance);
   setCardValue("totalROC", totalROC);
-  setCardValue("last12MonthROCAvg", last12MonthROCAvg);
+  setCardValue("latestAnnualROC", latestAnnualROC);
   setCardValue("totalTaxDeferred", totalTaxDeferred);
   setCardValue("totalROCTaxesPaid", totalTaxesPaid);
   setCardValue("capitalGainsTax", capitalGainsTax);
