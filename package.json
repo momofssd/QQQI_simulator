@@ -1,0 +1,15 @@
+{
+  "name": "qqqi-simulator",
+  "version": "1.0.0",
+  "description": "QQQI DCA Simulator",
+  "main": "script.js",
+  "scripts": {
+    "start": "npx serve ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "serve": "^14.2.4"
+  }
+}
