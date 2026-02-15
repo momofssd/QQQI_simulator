@@ -319,7 +319,7 @@
           <input
             type="number"
             id="initialBalance"
-            value="10000"
+            value="0"
             min="0"
             step="100"
           />
@@ -352,7 +352,7 @@
           <input
             type="number"
             id="currentAge"
-            value="30"
+            value="39"
             min="18"
             max="100"
             step="1"
@@ -364,7 +364,7 @@
           <input
             type="number"
             id="targetAge"
-            value="65"
+            value="50"
             min="18"
             max="120"
             step="1"
@@ -376,7 +376,7 @@
           <input
             type="number"
             id="sellAge"
-            value="85"
+            value="60"
             min="18"
             max="120"
             step="1"
@@ -399,7 +399,7 @@
           <label for="marketTrend">Market Trend</label>
           <select id="marketTrend">
             <option value="neutral">Neutral</option>
-            <option value="random">Random (Bullish/Bearish)</option>
+            <option value="random" selected>Random (Bullish/Bearish)</option>
             <option value="bullish">Bullish Bias</option>
             <option value="bearish">Bearish Bias</option>
           </select>
@@ -514,24 +514,47 @@
         }
       }
 
-      function generateMarketTrends(years, trendType) {
+      function generateMarketTrends(months, trendType) {
         const trends = [];
-        for (let i = 0; i < years; i++) {
-          let volatility;
-          if (trendType === "random") {
-            // Random selection between bullish and bearish
-            volatility =
-              Math.random() > 0.5
-                ? Math.random() * 0.03 // Bullish: 0% to 3%
-                : -(Math.random() * 0.03); // Bearish: 0% to -3%
-          } else if (trendType === "bullish") {
-            volatility = Math.random() * 0.03; // 0% to 3%
+        const years = Math.ceil(months / 12);
+
+        for (let y = 0; y < years; y++) {
+          let annualTarget;
+          let isRegimeShift = false;
+
+          if (trendType === "bullish") {
+            // Bullish Bias: 90% growth (5% to 15%), 10% retreat (-10% to -20%)
+            if (Math.random() < 0.1) {
+              annualTarget = -(Math.random() * 0.1 + 0.1); // -10% to -20%
+              isRegimeShift = true;
+            } else {
+              annualTarget = Math.random() * 0.1 + 0.05; // 5% to 15%
+            }
           } else if (trendType === "bearish") {
-            volatility = -(Math.random() * 0.03); // 0% to -3%
+            // Bearish Bias: 80% decline (0% to -14%), 20% recovery (+10% to +20%)
+            if (Math.random() < 0.2) {
+              annualTarget = Math.random() * 0.1 + 0.1; // +10% to +20%
+              isRegimeShift = true;
+            } else {
+              annualTarget = -(Math.random() * 0.14); // 0% to -14%
+            }
+          } else if (trendType === "random") {
+            // Standard Random: ±15-20% annual range
+            annualTarget = Math.random() * 0.4 - 0.2; // -20% to +20%
           } else {
-            volatility = 0;
+            annualTarget = 0;
           }
-          trends.push(volatility);
+
+          // Distribute annual target into 12 months with added random noise
+          // This creates a more natural walk towards the annual target
+          const monthlyBase = annualTarget / 12;
+          for (let m = 0; m < 12; m++) {
+            if (trends.length < months) {
+              // Add some monthly noise (±2%) so it's not a straight line
+              const noise = Math.random() * 0.04 - 0.02;
+              trends.push(monthlyBase + noise);
+            }
+          }
         }
         return trends;
       }
@@ -577,11 +600,8 @@
         // Convert annual ROC to monthly rate
         const baseMonthlyROC = annualROC / 100 / 12;
 
-        // Generate market trends
-        const yearlyTrends = generateMarketTrends(
-          totalProjectionYears,
-          marketTrend,
-        );
+        // Generate market trends (Monthly)
+        const monthlyTrends = generateMarketTrends(totalMonths, marketTrend);
 
         // Initialize share tracking
         let totalShares = initialBalance / qqqiPrice;
@@ -619,8 +639,9 @@
             currentYear + Math.floor((currentMonth + month - 1) / 12);
           const age = currentAge + yearIndex;
 
-          // Update share price based on market trend (monthly volatility)
-          const monthlyVolatility = yearlyTrends[yearIndex] / 12;
+          // Update share price based on market trend
+          // Monthly trends are now generated as direct monthly factors
+          const monthlyVolatility = monthlyTrends[month];
           currentSharePrice = currentSharePrice * (1 + monthlyVolatility);
 
           // Add Monthly DCA only until target age
@@ -655,7 +676,8 @@
             rocReinvested = rocAmount;
             totalROCReinvested += rocAmount;
 
-            // When reinvesting, create new lot with current share price as cost basis
+            // Reinvestment is treated like a new DCA contribution for cost basis purposes
+            // It creates a new lot with the current share price as the cost basis
             investmentLots.push({
               shares: sharesFromROC,
               costBasisPerShare: currentSharePrice,
@@ -732,18 +754,20 @@
             taxDeferred: taxDeferred,
             taxesPaid: taxesPaid,
             costBasis: totalCostBasis,
-            trend: yearlyTrends[yearIndex],
+            trend: monthlyTrends[month],
           });
 
           // Aggregate for chart (yearly basis)
           yearlyAggregate.endBalance = balance;
           yearlyAggregate.rocReceived += rocAmount;
+          yearlyAggregate.sharePrice = currentSharePrice; // Take price at end of year
 
           if ((month + 1) % 12 === 0 || month === totalMonths - 1) {
             chartData.push({
               year: year,
               endBalance: yearlyAggregate.endBalance,
               rocReceived: yearlyAggregate.rocReceived,
+              sharePrice: yearlyAggregate.sharePrice,
             });
             yearlyAggregate = {
               year: year + 1,
@@ -786,7 +810,7 @@
 
         // Display results with dynamic font sizing
         setCardValue("totalPrincipal", totalInvested);
-        setCardValue("totalInvested", totalInvested);
+        setCardValue("totalInvested", totalInvested + totalROCReinvested);
         setCardValue("finalBalance", finalBalance);
         setCardValue("totalROC", totalROC);
         setCardValue("latestMonthlyROC", latestMonthlyROC);
@@ -893,6 +917,7 @@
                 borderWidth: 3,
                 tension: 0.4,
                 fill: true,
+                yAxisID: "y",
               },
               {
                 label: "Annual ROC",
@@ -902,6 +927,17 @@
                 borderWidth: 2,
                 tension: 0.4,
                 fill: true,
+                yAxisID: "y",
+              },
+              {
+                label: "Share Price",
+                data: yearlyData.map((d) => d.sharePrice),
+                borderColor: "#c8102e",
+                borderDash: [5, 5],
+                borderWidth: 2,
+                tension: 0.4,
+                fill: false,
+                yAxisID: "y1",
               },
             ],
           },
@@ -940,7 +976,15 @@
                     if (label) {
                       label += ": ";
                     }
-                    label += formatCurrency(context.parsed.y);
+                    if (context.dataset.yAxisID === "y1") {
+                      label += new Intl.NumberFormat("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                        minimumFractionDigits: 2,
+                      }).format(context.parsed.y);
+                    } else {
+                      label += formatCurrency(context.parsed.y);
+                    }
                     return label;
                   },
                 },
@@ -948,7 +992,14 @@
             },
             scales: {
               y: {
+                type: "linear",
+                display: true,
+                position: "left",
                 beginAtZero: true,
+                title: {
+                  display: true,
+                  text: "Balance / ROC ($)",
+                },
                 ticks: {
                   callback: function (value) {
                     return formatCurrency(value);
@@ -961,6 +1012,28 @@
                 grid: {
                   color: "rgba(0, 0, 0, 0.06)",
                   drawBorder: false,
+                },
+              },
+              y1: {
+                type: "linear",
+                display: true,
+                position: "right",
+                beginAtZero: false,
+                title: {
+                  display: true,
+                  text: "Share Price ($)",
+                },
+                ticks: {
+                  callback: function (value) {
+                    return "$" + value.toFixed(2);
+                  },
+                  font: {
+                    size: 11,
+                  },
+                  color: "#c8102e",
+                },
+                grid: {
+                  drawOnChartArea: false,
                 },
               },
               x: {
@@ -985,11 +1058,11 @@
         document.getElementById("initialBalance").value = "10000";
         document.getElementById("qqqiPrice").value = "50";
         document.getElementById("monthlyDcaAmount").value = "400";
-        document.getElementById("currentAge").value = "30";
-        document.getElementById("targetAge").value = "65";
-        document.getElementById("sellAge").value = "85";
+        document.getElementById("currentAge").value = "39";
+        document.getElementById("targetAge").value = "50";
+        document.getElementById("sellAge").value = "60";
         document.getElementById("annualROC").value = "14";
-        document.getElementById("marketTrend").value = "neutral";
+        document.getElementById("marketTrend").value = "random";
         document.getElementById("results").classList.remove("show");
 
         if (rocChart) {
